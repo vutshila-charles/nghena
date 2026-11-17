@@ -1,0 +1,581 @@
+openapi: 3.1.0
+info:
+  title: Clockin API
+  version: 1.0.0
+  description: |
+    Versioned attendance API shared by the first-party browser application and future native clients.
+    Browser clients use Sanctum stateful sessions and CSRF; native clients use bearer tokens.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+  - sessionCookie: []
+tags:
+  - name: Authentication
+  - name: Profile
+  - name: Face
+  - name: Workplaces
+  - name: Attendance
+  - name: Corrections
+  - name: Administration
+paths:
+  /auth/login:
+    post:
+      tags: [Authentication]
+      security: []
+      summary: Start a browser session
+      description: Call GET /sanctum/csrf-cookie first. This endpoint establishes a Laravel session and rotates the session ID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+                remember:
+                  type: boolean
+                  default: true
+                  description: Keep the browser signed in on this device. Defaults to true; set false to opt out.
+      responses:
+        '200':
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserEnvelope' }
+              example:
+                data:
+                  user:
+                    id: 42
+                    name: Riley Chen
+                    email: riley@example.test
+                    role: employee
+                    is_active: true
+                    face_enrolled: true
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/tokens:
+    post:
+      tags: [Authentication]
+      security: []
+      summary: Issue a revocable mobile bearer token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, device_name]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+                device_name: { type: string, maxLength: 120 }
+            example:
+              email: riley@example.test
+              password: '<user password>'
+              device_name: Riley's iPhone
+      responses:
+        '201':
+          description: Token issued; store the token securely on the device.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      expires_at: { type: string, format: date-time }
+                      user: { $ref: '#/components/schemas/User' }
+              example:
+                data:
+                  token: '1|example-token-returned-once'
+                  expires_at: '2026-12-17T16:00:00Z'
+                  user:
+                    id: 42
+                    name: Riley Chen
+                    email: riley@example.test
+                    role: employee
+                    is_active: true
+                    face_enrolled: true
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    get:
+      tags: [Authentication]
+      summary: List the current user's API tokens
+      responses:
+        '200': { description: Token metadata; token secrets are never returned }
+  /auth/me:
+    get:
+      tags: [Profile]
+      summary: Get the authenticated user's profile
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: End the browser session or revoke the current mobile token
+      responses:
+        '200': { description: Logged out }
+  /auth/tokens/{tokenId}:
+    delete:
+      tags: [Authentication]
+      summary: Revoke one of the current user's tokens
+      parameters:
+        - in: path
+          name: tokenId
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Token revoked }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /face/enrollment:
+    post:
+      tags: [Face]
+      summary: Enroll or replace a face profile
+      description: Multipart image is passed to the configured backend FaceProvider. Raw images are not stored by this application.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image: { type: string, format: binary }
+      responses:
+        '201': { description: Enrollment stored as a provider reference }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '503': { description: Face provider is not configured }
+  /face/verification:
+    post:
+      tags: [Face]
+      summary: Verify a live face capture
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image: { type: string, format: binary }
+      responses:
+        '200': { description: Identity verified by the configured server-side provider }
+        '422': { description: Enrollment missing or verification did not match }
+        '503': { description: Face provider is not configured }
+  /workplaces/assigned:
+    get:
+      tags: [Workplaces]
+      summary: List the authenticated user's active workplace and shift assignments
+      responses:
+        '200': { description: Assigned workplaces with server-side validation coordinates }
+  /attendance/status:
+    get:
+      tags: [Attendance]
+      summary: Get today's attendance status
+      responses:
+        '200': { description: Current record or null }
+  /attendance/history:
+    get:
+      tags: [Attendance]
+      summary: Paginated attendance history
+      parameters:
+        - in: query
+          name: per_page
+          schema: { type: integer, minimum: 1, maximum: 100, default: 15 }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Attendance Resource collection with Laravel links and meta }
+  /attendance/clock-in:
+    post:
+      tags: [Attendance]
+      summary: Clock in
+      description: "Requires an assigned workplace, live coordinates, a verified face, and a unique idempotency key. Time comes from the server."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [workplace_id, latitude, longitude, face_image]
+              properties:
+                workplace_id: { type: integer }
+                latitude: { type: number, minimum: -90, maximum: 90 }
+                longitude: { type: number, minimum: -180, maximum: 180 }
+                face_image: { type: string, format: binary }
+      responses:
+        '201':
+          description: Attendance record created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      attendance: { $ref: '#/components/schemas/Attendance' }
+              example:
+                data:
+                  attendance:
+                    id: 128
+                    work_date: '2026-11-17'
+                    status: clocked_in
+                    clocked_in_at: '2026-11-17T08:03:12Z'
+                    clocked_out_at: null
+                    workplace:
+                      id: 3
+                      name: Main Office
+                    breaks: []
+        '409': { description: Attendance already exists for the work date }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /attendance/clock-out:
+    post:
+      tags: [Attendance]
+      summary: Clock out
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/AttendanceAction'
+      responses:
+        '200': { description: Attendance completed }
+        '409': { description: No active attendance or break still active }
+  /attendance/break/start:
+    post:
+      tags: [Attendance]
+      summary: Start a break
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/AttendanceAction'
+      responses:
+        '200': { description: Break started }
+        '409': { description: Invalid attendance state }
+  /attendance/break/end:
+    post:
+      tags: [Attendance]
+      summary: End a break
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/AttendanceAction'
+      responses:
+        '200': { description: Break ended }
+        '409': { description: Invalid attendance state }
+  /attendance/corrections:
+    get:
+      tags: [Corrections]
+      summary: List the authenticated user's correction requests
+      responses:
+        '200': { description: Paginated correction requests }
+    post:
+      tags: [Corrections]
+      summary: Submit a correction request for administrative review
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [work_date, reason]
+              properties:
+                attendance_record_id: { type: integer }
+                workplace_id: { type: integer, description: Required when creating a missing record }
+                work_date: { type: string, format: date }
+                clocked_in_at: { type: string, format: date-time }
+                clocked_out_at: { type: string, format: date-time }
+                reason: { type: string, maxLength: 2000 }
+      responses:
+        '201': { description: Correction request created }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /admin/dashboard:
+    get:
+      tags: [Administration]
+      summary: Get today's workforce summary
+      responses:
+        '200': { description: "Employee, active attendance, and pending correction counts" }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/employees:
+    get:
+      tags: [Administration]
+      summary: Paginated employee list
+      responses:
+        '200': { description: Employee Resource collection }
+    post:
+      tags: [Administration]
+      summary: Create an employee account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 12 }
+      responses:
+        '201': { description: Employee created }
+  /admin/employees/{user}:
+    patch:
+      tags: [Administration]
+      summary: Update employee details or deactivate access
+      parameters:
+        - in: path
+          name: user
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Employee updated }
+  /admin/employees/{user}/workplaces:
+    post:
+      tags: [Administration]
+      summary: Assign a workplace and optional shift
+      parameters:
+        - in: path
+          name: user
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workplace_id]
+              properties:
+                workplace_id: { type: integer }
+                shift_id: { type: integer }
+      responses:
+        '201': { description: Assignment saved }
+  /admin/workplaces:
+    get:
+      tags: [Administration]
+      summary: List workplaces
+      responses:
+        '200': { description: Paginated workplace collection }
+    post:
+      tags: [Administration]
+      summary: Create a geofenced workplace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, latitude, longitude, radius_meters]
+              properties:
+                name: { type: string }
+                address: { type: string }
+                latitude: { type: number }
+                longitude: { type: number }
+                radius_meters: { type: integer, minimum: 25, maximum: 5000 }
+      responses:
+        '201': { description: Workplace created }
+  /admin/workplaces/{workplace}:
+    patch:
+      tags: [Administration]
+      summary: Update or deactivate a workplace
+      parameters:
+        - in: path
+          name: workplace
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Workplace updated }
+  /admin/shifts:
+    get:
+      tags: [Administration]
+      summary: List shifts
+      responses:
+        '200': { description: Paginated shifts }
+    post:
+      tags: [Administration]
+      summary: Create a shift
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, starts_at, ends_at, break_minutes]
+              properties:
+                name: { type: string }
+                starts_at: { type: string, example: '09:00' }
+                ends_at: { type: string, example: '17:00' }
+                break_minutes: { type: integer, minimum: 0, maximum: 480 }
+      responses:
+        '201': { description: Shift created }
+  /admin/shifts/{shift}:
+    patch:
+      tags: [Administration]
+      summary: Update or deactivate a shift
+      parameters:
+        - in: path
+          name: shift
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Shift updated }
+  /admin/corrections:
+    get:
+      tags: [Administration]
+      summary: List correction requests for review
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [pending, approved, rejected] }
+      responses:
+        '200': { description: Paginated correction requests }
+  /admin/corrections/{correction}:
+    patch:
+      tags: [Administration]
+      summary: Approve or reject a correction request
+      parameters:
+        - in: path
+          name: correction
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                review_note: { type: string }
+      responses:
+        '200': { description: Correction reviewed }
+        '409': { description: Correction already reviewed }
+  /admin/reports/attendance:
+    get:
+      tags: [Administration]
+      summary: Paginated attendance report
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+        - in: query
+          name: user_id
+          schema: { type: integer }
+      responses:
+        '200': { description: Filtered attendance report }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Sanctum
+      description: Obtain a token using POST /auth/tokens. Tokens expire after 30 days and can be individually revoked.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: clockin_session
+      description: First-party browser session; call /sanctum/csrf-cookie and send X-XSRF-TOKEN on writes.
+  parameters:
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+      description: Repeated requests with the same key and payload return the original result. Reusing the key with a different payload returns 409.
+  requestBodies:
+    AttendanceAction:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [latitude, longitude, face_image]
+            properties:
+              latitude: { type: number, minimum: -90, maximum: 90 }
+              longitude: { type: number, minimum: -180, maximum: 180 }
+              face_image: { type: string, format: binary }
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [employee, admin] }
+        is_active: { type: boolean }
+        face_enrolled: { type: boolean }
+    UserEnvelope:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            user: { $ref: '#/components/schemas/User' }
+    Attendance:
+      type: object
+      properties:
+        id: { type: integer }
+        work_date: { type: string, format: date }
+        status: { type: string, enum: [clocked_in, on_break, completed] }
+        clocked_in_at: { type: [string, 'null'], format: date-time }
+        clocked_out_at: { type: [string, 'null'], format: date-time }
+        workplace:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+        breaks:
+          type: array
+          items: { type: object }
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: object, additionalProperties: true }
+  responses:
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Unauthenticated:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Forbidden:
+      description: The authenticated user is not authorized
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    RateLimited:
+      description: Too many attempts
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
