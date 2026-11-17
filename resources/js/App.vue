@@ -25,6 +25,13 @@ const selectedWorkplace = ref('');
 const capturedImage = ref(null);
 const video = ref(null);
 const cameraStream = ref(null);
+const faceSetupOpen = ref(false);
+const faceSetupStep = ref('intro');
+const enrollmentVideo = ref(null);
+const enrollmentStream = ref(null);
+const enrollmentImage = ref(null);
+const enrollmentPreviewUrl = ref('');
+const faceConsent = ref(false);
 const actionProgress = ref('');
 const isAdmin = computed(() => user.value?.role === 'admin');
 const nextAttendanceAction = computed(() => {
@@ -44,7 +51,7 @@ const correctionForm = ref({ attendance_record_id: '', workplace_id: '', work_da
 function showError(exception) {
     const body = exception?.response?.data;
     const messages = {
-        face_provider_unavailable: 'Face check has not been set up by your administrator yet.',
+        face_provider_unavailable: 'Face verification is not configured yet. Please ask your administrator to set it up.',
         face_enrollment_required: 'Set up your face check before clocking in.',
         face_verification_failed: 'We could not confirm your face. Please try again in good light.',
         workplace_not_assigned: 'You do not have a workplace assigned yet. Please ask your manager.',
@@ -124,18 +131,6 @@ async function logout() {
         user.value = null;
         current.value = null;
         history.value = [];
-    }
-}
-
-async function startCamera() {
-    error.value = '';
-    try {
-        cameraStream.value = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-        await nextTick();
-        if (video.value) video.value.srcObject = cameraStream.value;
-    } catch (exception) {
-        if (exception.name === 'NotAllowedError') error.value = 'Please allow camera access, then try again.';
-        else showError(exception);
     }
 }
 
@@ -247,32 +242,121 @@ async function submitAttendance(action = nextAttendanceAction.value?.action) {
     }
 }
 
-async function submitFaceEnrollment() {
+function openFaceSetup() {
+    error.value = '';
+    message.value = '';
+    faceConsent.value = false;
+    faceSetupStep.value = 'intro';
+    faceSetupOpen.value = true;
+}
+
+function stopEnrollmentCamera() {
+    enrollmentStream.value?.getTracks().forEach((track) => track.stop());
+    enrollmentStream.value = null;
+}
+
+function clearEnrollmentPhoto() {
+    if (enrollmentPreviewUrl.value) URL.revokeObjectURL(enrollmentPreviewUrl.value);
+    enrollmentPreviewUrl.value = '';
+    enrollmentImage.value = null;
+}
+
+function closeFaceSetup() {
+    stopEnrollmentCamera();
+    clearEnrollmentPhoto();
+    faceSetupStep.value = 'intro';
+    faceSetupOpen.value = false;
+    error.value = '';
+}
+
+async function startEnrollmentCamera() {
     busy.value = true;
     error.value = '';
-    actionProgress.value = 'Opening the camera…';
-    let stream;
     try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-        cameraStream.value = stream;
-        await capturePhoto(stream);
-        actionProgress.value = 'Setting up your face check…';
-        const form = new FormData();
-        form.append('image', capturedImage.value);
-        await api.post('/api/v1/face/enrollment', form);
-        capturedImage.value = null;
-        message.value = 'Face check is ready. You can clock in now.';
-        await loadApp();
+        if (!navigator.mediaDevices?.getUserMedia) {
+            throw new Error('Camera access is not available in this browser.');
+        }
+
+        enrollmentStream.value = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user' },
+            audio: false,
+        });
+        faceSetupStep.value = 'capture';
+        await nextTick();
+        enrollmentVideo.value.srcObject = enrollmentStream.value;
+        await enrollmentVideo.value.play();
     } catch (exception) {
-        if (exception.name === 'NotAllowedError') error.value = 'Please allow camera access, then try again.';
+        stopEnrollmentCamera();
+        faceSetupStep.value = 'intro';
+        if (exception.name === 'NotAllowedError') error.value = 'Allow camera access in your browser settings, then try again.';
+        else if (exception.name === 'NotFoundError') error.value = 'No camera was found on this device.';
         else if (exception.message && !exception.response) error.value = exception.message;
         else showError(exception);
     } finally {
-        stream?.getTracks().forEach((track) => track.stop());
-        cameraStream.value = null;
-        actionProgress.value = '';
         busy.value = false;
     }
+}
+
+async function captureEnrollmentPhoto() {
+    busy.value = true;
+    try {
+        const preview = enrollmentVideo.value;
+        if (!preview || !enrollmentStream.value || !preview.videoWidth) {
+            error.value = 'The camera is still starting. Please wait a moment and try again.';
+            return;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = preview.videoWidth;
+        canvas.height = preview.videoHeight;
+        const context = canvas.getContext('2d');
+        if (!context) {
+            error.value = 'The photo could not be prepared. Please try again.';
+            return;
+        }
+
+        context.drawImage(preview, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+        if (!blob) {
+            error.value = 'The photo could not be captured. Please try again.';
+            return;
+        }
+
+        clearEnrollmentPhoto();
+        enrollmentImage.value = new File([blob], 'face-enrollment.jpg', { type: 'image/jpeg' });
+        enrollmentPreviewUrl.value = URL.createObjectURL(enrollmentImage.value);
+        stopEnrollmentCamera();
+        faceSetupStep.value = 'review';
+        error.value = '';
+    } catch (exception) {
+        error.value = exception.message || 'The photo could not be captured. Please try again.';
+    } finally {
+        busy.value = false;
+    }
+}
+
+async function submitFaceEnrollment() {
+    if (!enrollmentImage.value) return;
+
+    busy.value = true;
+    error.value = '';
+    try {
+        const form = new FormData();
+        form.append('image', enrollmentImage.value);
+        await api.post('/api/v1/face/enrollment', form);
+        closeFaceSetup();
+        message.value = 'Face check is ready. You can clock in now.';
+        await loadApp();
+    } catch (exception) {
+        showError(exception);
+    } finally {
+        busy.value = false;
+    }
+}
+
+async function retakeEnrollmentPhoto() {
+    clearEnrollmentPhoto();
+    await startEnrollmentCamera();
 }
 
 async function createEmployee() {
@@ -380,7 +464,10 @@ function formatTime(value) {
 }
 
 onMounted(loadApp);
-onUnmounted(stopCamera);
+onUnmounted(() => {
+    stopCamera();
+    closeFaceSetup();
+});
 </script>
 
 <template>
@@ -479,9 +566,9 @@ onUnmounted(stopCamera);
                         <div v-if="message" role="status" class="mt-3 rounded-xl bg-emerald-50 px-4 py-3 text-center text-sm font-medium text-emerald-800">{{ message }}</div>
 
                         <div v-if="!user.face_enrolled && current?.status !== 'completed'" class="mt-6">
-                            <p class="text-center text-sm text-slate-600">First, take one quick photo so we can confirm it’s you.</p>
-                            <button :disabled="busy" class="mt-3 min-h-14 w-full rounded-2xl bg-indigo-600 px-6 py-4 text-lg font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 disabled:cursor-wait disabled:opacity-60" @click="submitFaceEnrollment">
-                                {{ busy ? 'Setting up…' : 'Set up my face check' }}
+                            <p class="text-center text-sm text-slate-600">Set up your face check with a guided camera photo.</p>
+                            <button :disabled="busy" class="mt-3 min-h-14 w-full rounded-2xl bg-indigo-600 px-6 py-4 text-lg font-semibold text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-200 disabled:cursor-wait disabled:opacity-60" @click="openFaceSetup">
+                                Set up my face check
                             </button>
                         </div>
                         <div v-else-if="nextAttendanceAction" class="mt-6 grid gap-3">
@@ -578,14 +665,8 @@ onUnmounted(stopCamera);
                         <div class="rounded-xl border border-dashed border-slate-300 p-4">
                             <div class="flex flex-wrap items-center justify-between gap-3">
                                 <div><p class="font-medium">Identity verification</p><p class="mt-1 text-xs text-slate-500">{{ user.face_enrolled ? 'Face profile enrolled' : 'Enroll your face profile to clock in' }}</p></div>
-                                <div class="flex gap-2">
-                                    <button v-if="!cameraStream" class="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium" @click="startCamera">Open camera</button>
-                                    <button v-else class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white" @click="capturePhoto">Capture photo</button>
-                                </div>
+                                <button v-if="!user.face_enrolled" type="button" class="min-h-11 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white" @click="openFaceSetup">Set up face check</button>
                             </div>
-                            <video v-if="cameraStream" ref="video" autoplay playsinline class="mt-4 aspect-video w-full rounded-lg bg-slate-900 object-cover"></video>
-                            <p v-else-if="capturedImage" class="mt-3 text-sm text-emerald-700">Photo ready for secure verification.</p>
-                            <button v-if="capturedImage && !user.face_enrolled" :disabled="busy" class="mt-3 text-sm font-semibold text-indigo-700 underline" @click="submitFaceEnrollment">Enroll captured photo</button>
                         </div>
                         <div class="mt-5 flex flex-wrap gap-3">
                             <button v-if="!current" :disabled="busy" class="rounded-xl bg-indigo-600 px-5 py-3 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50" @click="submitAttendance('clock-in')">Clock in</button>
@@ -690,6 +771,68 @@ onUnmounted(stopCamera);
                 </section>
                 </div>
             </template>
+            <div v-if="faceSetupOpen" class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/70 p-4" @keydown.esc="closeFaceSetup">
+                <section role="dialog" aria-modal="true" aria-labelledby="face-setup-title" class="my-auto w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl">
+                    <div class="flex items-center justify-between border-b border-slate-100 px-5 py-4 sm:px-7">
+                        <div>
+                            <p class="text-xs font-semibold uppercase tracking-wide text-indigo-600">
+                                {{ faceSetupStep === 'intro' ? 'Step 1 of 3' : faceSetupStep === 'capture' ? 'Step 2 of 3' : 'Step 3 of 3' }}
+                            </p>
+                            <h2 id="face-setup-title" class="mt-1 text-lg font-bold text-slate-900">
+                                {{ faceSetupStep === 'intro' ? 'Set up your face check' : faceSetupStep === 'capture' ? 'Center your face' : 'Review your photo' }}
+                            </h2>
+                        </div>
+                        <button type="button" aria-label="Close face setup" :disabled="busy" class="grid size-11 place-items-center rounded-full text-2xl text-slate-500 hover:bg-slate-100 disabled:opacity-50" @click="closeFaceSetup">×</button>
+                    </div>
+
+                    <div class="p-5 sm:p-7">
+                        <template v-if="faceSetupStep === 'intro'">
+                            <div class="mx-auto grid size-20 place-items-center rounded-full bg-indigo-50 text-indigo-600">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="size-10" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3m-8 0H5a1 1 0 0 1-1-1v-3M9 10h.01M15 10h.01M9 15c.8.7 1.8 1 3 1s2.2-.3 3-1" />
+                                </svg>
+                            </div>
+                            <h3 class="mt-5 text-center text-xl font-bold text-slate-900">A quick camera setup</h3>
+                            <p class="mt-2 text-center leading-6 text-slate-600">We’ll take one clear photo for your attendance face check. Find a bright spot, remove sunglasses or anything covering your face, and look straight at the camera.</p>
+                            <label class="mt-5 flex cursor-pointer items-start gap-3 rounded-2xl bg-slate-50 p-4 text-sm leading-5 text-slate-700">
+                                <input v-model="faceConsent" type="checkbox" class="mt-0.5 size-5 shrink-0 rounded border-slate-300 accent-indigo-600">
+                                <span>I agree to use this photo for attendance identity verification.</span>
+                            </label>
+                            <p class="mt-4 text-xs leading-5 text-slate-500">Your photo is sent securely to the configured face verification provider. Nghena does not store raw camera photos. This camera guide is not Apple Face ID and does not track head movement.</p>
+                        </template>
+
+                        <template v-else-if="faceSetupStep === 'capture'">
+                            <p class="mb-4 text-center text-sm leading-5 text-slate-600">Keep your face inside the guide and make sure the light is in front of you.</p>
+                            <div class="relative overflow-hidden rounded-3xl bg-slate-950">
+                                <video ref="enrollmentVideo" autoplay playsinline muted class="aspect-[4/5] w-full object-cover [transform:scaleX(-1)]" aria-label="Live face setup camera preview"></video>
+                                <div class="pointer-events-none absolute inset-y-[8%] left-[19%] right-[19%] rounded-[50%] border-2 border-dashed border-white shadow-[0_0_0_999px_rgba(15,23,42,0.24)]" aria-hidden="true"></div>
+                                <div class="pointer-events-none absolute inset-x-0 bottom-3 text-center text-sm font-medium text-white drop-shadow">Fit your face inside the outline</div>
+                            </div>
+                        </template>
+
+                        <template v-else>
+                            <img :src="enrollmentPreviewUrl" alt="Preview of your face setup photo" class="aspect-[4/5] w-full rounded-3xl bg-slate-100 object-cover">
+                            <p class="mt-4 text-center text-sm leading-5 text-slate-600">Check that your face is clear and well lit. Retake it if you’re not happy with the photo.</p>
+                        </template>
+
+                        <p v-if="error" role="alert" class="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ error }}</p>
+
+                        <div class="mt-6 grid gap-3 sm:grid-cols-2">
+                            <button v-if="faceSetupStep === 'intro'" type="button" :disabled="busy" class="min-h-12 rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50" @click="closeFaceSetup">Not now</button>
+                            <button v-else-if="faceSetupStep === 'capture'" type="button" :disabled="busy" class="min-h-12 rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50" @click="closeFaceSetup">Cancel</button>
+                            <button v-else type="button" class="min-h-12 rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50" :disabled="busy" @click="retakeEnrollmentPhoto">Retake photo</button>
+
+                            <button v-if="faceSetupStep === 'intro'" type="button" :disabled="!faceConsent || busy" class="min-h-12 rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50" @click="startEnrollmentCamera">Continue to camera</button>
+                            <button v-else-if="faceSetupStep === 'capture'" type="button" :disabled="busy" class="min-h-12 rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60" @click="captureEnrollmentPhoto">
+                                {{ busy ? 'Preparing camera…' : 'Take photo' }}
+                            </button>
+                            <button v-else type="button" :disabled="busy" class="min-h-12 rounded-xl bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60" @click="submitFaceEnrollment">
+                                {{ busy ? 'Saving securely…' : 'Use this photo' }}
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </div>
         </main>
         <footer class="mx-auto max-w-7xl px-5 pb-8 text-xs text-slate-400">Nghena · Secure workforce attendance</footer>
     </div>

@@ -17,6 +17,8 @@ npm install
 npm run build
 ```
 
+The production build limits Tailwind's Rayon worker pool to one thread by default, which avoids thread-limit failures on constrained shared hosting. Set `RAYON_NUM_THREADS` before running the build to override that default.
+
 Seed the local database with demo accounts, workplaces, shifts, assignments, recent attendance history, and one pending correction request:
 
 ```sh
@@ -95,6 +97,7 @@ Collections use Laravel API Resources and Laravel pagination metadata. API error
 - Idempotency keys are unique per user and stored with the request hash and original response. Replaying a request with the same payload returns the original response; changing the payload under the same key returns `409 idempotency_key_reused`. A unique `(user_id, work_date)` database constraint prevents duplicate daily attendance records.
 - Attendance actions require a live network request; offline clock events are not accepted or queued.
 - The app does not persist face images. The provider interface receives the upload in the backend. Implement `App\Services\Face\FaceProvider` for the selected vendor, configure its class through the server-only `FACE_PROVIDER` environment variable, and keep all provider credentials in server-side environment configuration. A browser/native vendor SDK can produce provider-specific inputs, but any final identity decision must be confirmed by this server provider. Until configured, face endpoints return `503 face_provider_unavailable`; attendance is intentionally unavailable rather than trusting a client-side match.
+- Face enrollment in the browser is a consent-based, single-photo camera flow with a framing guide and review/retake step. It does not use or enroll Apple Face ID, track head movement, or perform liveness checks; those capabilities require a configured identity provider and its supported SDK.
 - Location coordinates are treated as untrusted inputs; the server computes distance to the assigned workplace. Browser geolocation requires a secure context (HTTPS outside localhost).
 
 ## Roles and administration
