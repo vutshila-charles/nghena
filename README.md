@@ -42,7 +42,9 @@ php artisan serve
 npm run dev
 ```
 
-The API and browser client should share an origin in production. Local Vite development proxies `/api` and `/sanctum` to `http://127.0.0.1:8000`; set `LARAVEL_DEV_SERVER` if Laravel listens elsewhere. Configure `SANCTUM_STATEFUL_DOMAINS` and `FRONTEND_ORIGINS` for the exact frontend host(s). Never use wildcard browser origins with credentialed cookies. Production session cookies are Secure by default; local HTTP development may set `SESSION_SECURE_COOKIE=false`.
+The API and browser client should share an origin in production. Local Vite development proxies `/api` and `/sanctum` to `http://127.0.0.1:8000`; set `LARAVEL_DEV_SERVER` if Laravel listens elsewhere. Configure `APP_URL` to the canonical app URL, and set `SANCTUM_STATEFUL_DOMAINS` and `FRONTEND_ORIGINS` for the exact frontend host(s). The Sanctum config always adds the host from `APP_URL` to the stateful list, even when `SANCTUM_STATEFUL_DOMAINS` is explicitly set. Never use wildcard browser origins with credentialed cookies. Production session cookies are Secure by default; local HTTP development may set `SESSION_SECURE_COOKIE=false`.
+
+For the deployed demo, set `APP_URL=https://clock.survaxis.co.za`, include `clock.survaxis.co.za` in `SANCTUM_STATEFUL_DOMAINS`, and set `FRONTEND_ORIGINS=https://clock.survaxis.co.za`. After changing environment values, clear Laravel's cached configuration and restart the PHP application so the settings take effect.
 
 ## Authentication
 

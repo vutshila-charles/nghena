@@ -11,6 +11,21 @@ class ApiAuthenticationTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_browser_login_uses_application_host_with_an_explicit_stateful_domain_list(): void
+    {
+        $user = User::factory()->create();
+        config(['app.url' => 'https://clockin.example.test']);
+        config(['sanctum.stateful' => (require config_path('sanctum.php'))['stateful']]);
+
+        $this->withHeaders(['Origin' => 'https://clockin.example.test'])
+            ->postJson('/api/v1/auth/login', [
+                'email' => $user->email,
+                'password' => 'password',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.user.id', $user->id);
+    }
+
     public function test_browser_session_authentication_uses_the_versioned_api(): void
     {
         $user = User::factory()->create();
