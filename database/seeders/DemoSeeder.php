@@ -51,16 +51,17 @@ class DemoSeeder extends Seeder
             ),
         ]);
 
-        $headquarters = Workplace::query()->updateOrCreate(
-            ['name' => 'Clockin Headquarters'],
-            [
-                'address' => 'San Francisco, CA',
-                'latitude' => 37.7749,
-                'longitude' => -122.4194,
-                'radius_meters' => 300,
-                'is_active' => true,
-            ],
-        );
+        $headquarters = Workplace::query()
+            ->whereIn('name', ['Nghena Headquarters', 'Clockin Headquarters'])
+            ->first() ?? new Workplace;
+        $headquarters->fill([
+            'name' => 'Nghena Headquarters',
+            'address' => 'San Francisco, CA',
+            'latitude' => 37.7749,
+            'longitude' => -122.4194,
+            'radius_meters' => 300,
+            'is_active' => true,
+        ])->save();
         $studio = Workplace::query()->updateOrCreate(
             ['name' => 'Design Studio'],
             [

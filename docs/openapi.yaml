@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: Clockin API
+  title: Nghena API
   version: 1.0.0
   description: |
     Versioned attendance API shared by the first-party browser application and future native clients.

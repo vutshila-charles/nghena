@@ -17,6 +17,15 @@ class DemoSeederTest extends TestCase
 
     public function test_demo_seeder_creates_login_accounts_and_sample_attendance_idempotently(): void
     {
+        Workplace::query()->create([
+            'name' => 'Clockin Headquarters',
+            'address' => 'San Francisco, CA',
+            'latitude' => 37.7749,
+            'longitude' => -122.4194,
+            'radius_meters' => 300,
+            'is_active' => true,
+        ]);
+
         $this->seed();
 
         $this->assertDatabaseHas('users', [
@@ -33,6 +42,8 @@ class DemoSeederTest extends TestCase
         $admin = User::query()->where('email', 'admin@clockin.test')->firstOrFail();
         $this->assertTrue(Hash::check(config('demo.password'), $admin->password));
         $this->assertSame(2, Workplace::query()->count());
+        $this->assertDatabaseHas('workplaces', ['name' => 'Nghena Headquarters']);
+        $this->assertDatabaseMissing('workplaces', ['name' => 'Clockin Headquarters']);
         $this->assertSame(2, Shift::query()->count());
         $this->assertGreaterThan(0, AttendanceRecord::query()->count());
         $this->assertSame('pending', CorrectionRequest::query()->firstOrFail()->status);

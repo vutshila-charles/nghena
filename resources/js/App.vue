@@ -388,8 +388,8 @@ onUnmounted(stopCamera);
         <header v-if="user" class="border-b border-slate-200 bg-white">
             <div class="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
                 <a class="flex items-center gap-3 font-semibold tracking-tight" href="/">
-                    <span class="grid size-10 place-items-center rounded-xl bg-indigo-600 text-lg text-white">c</span>
-                    <span class="text-xl">clockin<span class="text-indigo-600">.</span></span>
+                    <span class="grid size-10 place-items-center rounded-xl bg-indigo-600 text-lg font-bold text-white">N</span>
+                    <span class="text-xl">Nghena<span class="text-indigo-600">.</span></span>
                 </a>
                 <div v-if="user" class="flex items-center gap-3">
                     <div class="hidden text-right sm:block">
@@ -404,8 +404,8 @@ onUnmounted(stopCamera);
         <main :class="user ? 'mx-auto max-w-7xl px-5 py-5 sm:py-9' : 'flex min-h-screen items-center justify-center bg-gradient-to-b from-indigo-50 via-slate-50 to-white px-4 py-10 sm:px-6'">
             <section v-if="!user && appReady" class="w-full max-w-md">
                 <div class="mb-8 flex items-center justify-center gap-3">
-                    <span class="grid size-12 place-items-center rounded-2xl bg-indigo-600 text-xl font-bold text-white shadow-lg shadow-indigo-200">c</span>
-                    <span class="text-2xl font-bold tracking-tight text-slate-900">clockin<span class="text-indigo-600">.</span></span>
+                    <span class="grid size-12 place-items-center rounded-2xl bg-indigo-600 text-xl font-bold text-white shadow-lg shadow-indigo-200">N</span>
+                    <span class="text-2xl font-bold tracking-tight text-slate-900">Nghena<span class="text-indigo-600">.</span></span>
                 </div>
                 <form class="rounded-3xl bg-white p-6 shadow-xl shadow-slate-200/70 ring-1 ring-slate-200 sm:p-9" @submit.prevent="login">
                     <div>
@@ -437,8 +437,8 @@ onUnmounted(stopCamera);
             </section>
 
             <section v-else-if="!user" class="text-center" role="status" aria-live="polite">
-                <span class="mx-auto grid size-12 place-items-center rounded-2xl bg-indigo-600 text-xl font-bold text-white">c</span>
-                <p class="mt-4 text-sm font-medium text-slate-600">Opening Clockin…</p>
+                <span class="mx-auto grid size-12 place-items-center rounded-2xl bg-indigo-600 text-xl font-bold text-white">N</span>
+                <p class="mt-4 text-sm font-medium text-slate-600">Opening Nghena…</p>
             </section>
 
             <template v-else>
@@ -691,6 +691,6 @@ onUnmounted(stopCamera);
                 </div>
             </template>
         </main>
-        <footer class="mx-auto max-w-7xl px-5 pb-8 text-xs text-slate-400">Clockin · Secure workforce attendance</footer>
+        <footer class="mx-auto max-w-7xl px-5 pb-8 text-xs text-slate-400">Nghena · Secure workforce attendance</footer>
     </div>
 </template>
